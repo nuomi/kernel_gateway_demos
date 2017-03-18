@@ -19,7 +19,7 @@ from jupyter_client.session import Session
 from traitlets import Unicode, default
 from traitlets.config.configurable import LoggingConfigurable
 
-# TODO: Find a better way to specify global configuration options 
+# TODO: Find a better way to specify global configuration options
 # for a server extension.
 KG_URL = os.getenv('KG_URL', 'http://127.0.0.1:8888/')
 KG_HEADERS = json.loads(os.getenv('KG_HEADERS', '{}'))
@@ -28,6 +28,14 @@ KG_HEADERS.update({
 })
 VALIDATE_KG_CERT = os.getenv('VALIDATE_KG_CERT') not in ['no', 'false']
 
+#
+# def break_kernel_id(kernel_id):
+#     try:
+#         ip, kernel_id = kernel_id.split('|')
+#         return ip, kernel_id
+#     except Exception as err:
+#         print(err)
+#
 
 class WebSocketChannelsHandler(WebSocketHandler, IPythonHandler):
 
@@ -73,8 +81,22 @@ class WebSocketChannelsHandler(WebSocketHandler, IPythonHandler):
     def open(self, kernel_id, *args, **kwargs):
         '''Handle web socket connection open to notebook server.'''
         # Delegate to web socket handler
+        # http://www.tornadoweb.org/en/stable/websocket.html#tornado.websocket.WebSocketHandler.open
+        # WebSocketHandler.open(*args, **kwargs)[source]
+        # Invoked when a new WebSocket is opened.
+        # The arguments to open are extracted from the tornado.web.URLSpec regular expression, just like the arguments to tornado.web.RequestHandler.get.
+
+        try:
+            km = self.kernel_manager
+            self.log.debug('open(): km._kernels is %s ', km._kernels)
+        except Exception as err:
+            self.log.error('open(): error on getting self.kernel_manager')
+            self.log.error(err)
+
         self.client.on_open(
             kernel_id=kernel_id,
+            # add kernel_address
+            kernel_address = km._kernels[kernel_id]['address'],
             message_callback=self.write_message,
             compression_options=self.get_compression_options()
         )
@@ -99,14 +121,18 @@ class KernelGatewayWSClient(LoggingConfigurable):
         self.ws = None
         self.ws_future = Future()
 
+    # on_open()
     @gen.coroutine
-    def _connect(self, kernel_id):
+    def _connect(self, kernel_id, kernel_address):
+        # use kernel_address instead of KG_URL
+
         ws_url = url_path_join(
-            KG_URL.replace('http', 'ws'), 
-            '/api/kernels', 
+            kernel_address.replace('http', 'ws'),
+            '/api/kernels',
             url_escape(kernel_id),
             'channels'
         )
+
         self.log.info('Connecting to {}'.format(ws_url))
         request = HTTPRequest(ws_url, headers=KG_HEADERS, validate_cert=VALIDATE_KG_CERT)
         self.ws_future = websocket_connect(request)
@@ -129,9 +155,10 @@ class KernelGatewayWSClient(LoggingConfigurable):
             if message is None: break # TODO: handle socket close
             callback(message)
 
-    def on_open(self, kernel_id, message_callback, **kwargs):
+    def on_open(self, kernel_id, kernel_address, message_callback, **kwargs):
         '''Web socket connection open.'''
-        self._connect(kernel_id)
+
+        self._connect(kernel_id, kernel_address)
         loop = IOLoop.current()
         loop.add_future(
             self.ws_future,
@@ -168,6 +195,23 @@ class MainKernelHandler(APIHandler):
     @json_errors
     @gen.coroutine
     def get(self):
+        # https://github.com/jupyter/notebook/blob/master/notebook/base/handlers.py
+        # def kernel_manager(self):
+        #   return self.settings['kernel_manager']
+        # And in Notebook Default Settings:
+        # NotebookApp.kernel_manager_class [Type] Default: ’notebook.services.kernels.kernelmanager.MappingKerne
+        # The kernel manager class to use.
+
+        # But!!! In this case, other class is provide through command line parameter
+
+        # CMD ["jupyter", "notebook", \
+        #      "--NotebookApp.ip=0.0.0.0", \
+        #      "--NotebookApp.session_manager_class=nb2kg.managers.SessionManager", \
+        #      "--NotebookApp.kernel_manager_class=nb2kg.managers.RemoteKernelManager", \
+        #      "--NotebookApp.kernel_spec_manager_class=nb2kg.managers.RemoteKernelSpecManager"]
+
+        # So! the actual kernel_manager here is nb2kg.managers.RemoteKernelManager
+
         km = self.kernel_manager
         kernels = yield gen.maybe_future(km.list_kernels())
         self.finish(json.dumps(kernels))
