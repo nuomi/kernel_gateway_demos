@@ -19,6 +19,8 @@ from traitlets import Instance, Unicode, default
 
 # TODO: Find a better way to specify global configuration options
 # for a server extension.
+
+# TODO: use a static configuration file, force the process to reload it on SIGHUP
 KG_URL = os.getenv('KG_URL', 'http://127.0.0.1:8888/')
 
 # try a multi KG configuration
@@ -213,6 +215,7 @@ class RemoteKernelManager(MappingKernelManager):
     def list_kernels(self, **kwargs):
 
         # KG_URLS has a default value, so it will always be there
+
         kernel_gateways = break_kg_urls(KG_URLS)
         kernel_gateways.append(KG_URL)
         self.log.debug('list_kernels(): kernel_gateways are %s', str(kernel_gateways))
@@ -342,9 +345,12 @@ class RemoteKernelSpecManager(KernelSpecManager):
     @gen.coroutine
     def list_kernel_specs(self):
         # KG_URLS has a default value, so
+
         kernel_gateways = break_kg_urls(KG_URLS)
         kernel_gateways.append(KG_URL)
-        self.log.debug('kernel_gateways: %s', str(kernel_gateways))
+        self.log.debug('list_kernel_specs(): KG_URL is %s', KG_URL)
+        self.log.debug('list_kernel_specs(): KG_URLS is %s', KG_URLS)
+        self.log.debug('list_kernel_specs(): kernel_gateways: %s', str(kernel_gateways))
 
         for kg in kernel_gateways:
             """Get a list of kernel specs."""
